@@ -33,6 +33,7 @@ type Driver struct {
 	ScriptID          int
 	HasCustomScript   bool
 	UserDataFile      string
+	CloudConfigTpl    string
 	client            *vultr.Client
 }
 
@@ -99,7 +100,12 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 		mcnflag.StringFlag{
 			EnvVar: "VULTR_USERDATA",
 			Name:   "vultr-userdata",
-			Usage:  "Path to file with Cloud-init User Data",
+			Usage:  "Path to file with cloud-init user-data for non-custom OS",
+		},
+		mcnflag.StringFlag{
+			EnvVar: "VULTR_CLOUD_CONFIG_TEMPLATE",
+			Name:   "vultr-cloud-config-template",
+			Usage:  "Path to file with cloud-config template for Custom OS and RancherOS",
 		},
 	}
 }
@@ -136,6 +142,7 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.PrivateNetworking = flags.Bool("vultr-private-networking")
 	d.Backups = flags.Bool("vultr-backups")
 	d.UserDataFile = flags.String("vultr-userdata")
+	d.CloudConfigTpl = flags.String("vultr-cloud-config-template")
 	d.SwarmMaster = flags.Bool("swarm-master")
 	d.SwarmHost = flags.String("swarm-host")
 	d.SwarmDiscovery = flags.String("swarm-discovery")
@@ -155,6 +162,14 @@ func (d *Driver) PreCreateCheck() error {
 		}
 		if _, err := os.Stat(d.UserDataFile); os.IsNotExist(err) {
 			return fmt.Errorf("Unable to find User Data file at %s", d.UserDataFile)
+		}
+	}
+	if d.CloudConfigTpl != "" {
+		if d.OSID != 159 {
+			return fmt.Errorf("CloudConfigTpl is only supported with 'Custom OS' (159)")
+		}
+		if _, err := os.Stat(d.CloudConfigTpl); os.IsNotExist(err) {
+			return fmt.Errorf("Unable to find cloud-init template file at %s", d.CloudConfigTpl)
 		}
 	}
 
@@ -295,7 +310,7 @@ func (d *Driver) GetURL() (string, error) {
 	if s != state.Running {
 		return "", drivers.ErrHostIsNotRunning
 	}
-	
+
 	ip, err := d.GetIP()
 	if err != nil {
 		return "", err
@@ -472,6 +487,7 @@ set base-url http://releases.rancher.com/os/latest
 kernel ${base-url}/vmlinuz rancher.state.formatzero=true rancher.state.autoformat=[/dev/sda,/dev/vda] rancher.cloud_init.datasources=[ec2]
 initrd ${base-url}/initrd
 boot`
+
 	script, err := d.getClient().CreateStartupScript(d.MachineName, content, "pxe")
 	if err != nil {
 		return err
@@ -492,7 +508,7 @@ func (d *Driver) getCloudConfig() (string, error) {
 		PrivateNet   bool
 		CustomScript bool
 	}
-	const tpl = `#cloud-config
+	tpl := `#cloud-config
 hostname: {{.HostName}}
 ssh_authorized_keys:
   - {{.SSHkey}}
@@ -517,6 +533,15 @@ rancher:
         address: $private_ipv4/16
         mtu: 1450{{end}}{{end}}
 `
+
+	if d.CloudConfigTpl != "" {
+		buf, err := ioutil.ReadFile(d.CloudConfigTpl)
+		if err != nil {
+			return "", err
+		}
+		tpl = string(buf)
+	}
+
 	var buffer bytes.Buffer
 
 	publicKey, err := ioutil.ReadFile(d.publicSSHKeyPath())

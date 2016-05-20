@@ -1,7 +1,7 @@
 .PHONY : build clean fmt release
 
 NAME=docker-machine-driver-vultr
-VERSION:=$(shell git describe --abbrev=0 --tags)
+VERSION:=$(shell git describe --abbrev=0 --tags || echo $$VERSION)
 
 #ifdef $CIRCLE_BUILD_NUM
 ifneq ($(CIRCLE_BUILD_NUM),)
@@ -52,6 +52,10 @@ get-deps:
 	go get -u golang.org/x/crypto/ssh/terminal
 	go get -u github.com/Azure/go-ansiterm
 	go get -u github.com/Sirupsen/logrus
+
+get-build-deps:
+	go get -u github.com/JamesClonk/vultr
+	go get -u github.com/docker/machine
 
 check-gofmt:
 	if [ -n "$(shell gofmt -l .)" ]; then \
